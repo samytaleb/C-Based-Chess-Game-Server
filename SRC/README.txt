@@ -1,4 +1,4 @@
-Bonjour Monsieur,
+Bonjour,
 Voici les instructions à suivre afin de pouvoir lancer convenablement notre projet de création d'un serveur de jeu d'échecs:
 
 1. Une fois le fichier TAR téléchargé, il faut se placer dans le répértoire du dossier extrait pour y compiler les différents fichiers (server.c et client.c) en configurant le port. On utilisera la commande suivante: ./setup.sh
