@@ -1,8 +1,4 @@
-#!/bin/bash
-
-# Compilation du serveur
-gcc server.c -o server -lpthread
-
-# Compilation du client
-gcc client.c -o client
-
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+make all
