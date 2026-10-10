@@ -1,0 +1,6 @@
+/server
+/client
+/tests/test_chess
+*.o
+*.out
+core
