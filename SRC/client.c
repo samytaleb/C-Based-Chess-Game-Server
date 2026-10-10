@@ -1,157 +1,94 @@
+#define _POSIX_C_SOURCE 200809L
+#include <arpa/inet.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
-#include <arpa/inet.h>
 
-#define PORT 9999
-#define BUFFER_SIZE 1024
-
-void initialiser_echiquier(char echiquier[8][8]) {
-    // Initialiser les pions
-    for (int i = 0; i < 8; i++) {
-        echiquier[1][i] = 'p'; // Pion noir
-        echiquier[6][i] = 'P'; // Pion blanc
+static int send_all(int fd, const char *s) {
+    size_t n = strlen(s), off = 0;
+    while (off < n) {
+        ssize_t sent = send(fd, s + off, n - off, 0);
+        if (sent <= 0) return 0;
+        off += (size_t)sent;
     }
-
-    // Initialiser les pièces
-    char pieces_noires[] = {'t', 'c', 'f', 'd', 'r', 'f', 'c', 't'};
-    char pieces_blanches[] = {'T', 'C', 'F', 'D', 'R', 'F', 'C', 'T'};
-    for (int i = 0; i < 8; i++) {
-        echiquier[0][i] = pieces_noires[i]; // Pièces noires
-        echiquier[7][i] = pieces_blanches[i]; // Pièces blanches
-    }
-
-    // Initialiser les cases vides
-    for (int i = 2; i < 6; i++) {
-        for (int j = 0; j < 8; j++) {
-            echiquier[i][j] = '.';
-        }
+    return 1;
+}
+static int read_line(int fd, char *buffer, size_t capacity) {
+    size_t used = 0;
+    for (;;) {
+        char ch;
+        ssize_t n = recv(fd, &ch, 1, 0);
+        if (n <= 0) return 0;
+        if (ch == '\r') continue;
+        if (ch == '\n') { buffer[used] = '\0'; return 1; }
+        if (used + 1 >= capacity) return 0;
+        buffer[used++] = ch;
     }
 }
-
-void afficher_echiquier(char echiquier[8][8], int tour) {
-    printf("\033[1;34m");  // Couleur bleue pour l'échiquier
-    printf("  a b c d e f g h\n");
-    printf(" +-----------------+\n");
-    for (int i = 0; i < 8; i++) {
-        printf("%d|", 8 - i);
-        for (int j = 0; j < 8; j++) {
-            switch (echiquier[i][j]) {
-                case 'p':
-                    printf(" \033[1;30m%c\033[0m", echiquier[i][j]);
-                    break;
-                case 'P':
-                    printf(" \033[1;37m%c\033[0m", echiquier[i][j]);
-                    break;
-                case 't':
-                    printf(" \033[1;30m%c\033[0m", echiquier[i][j]);
-                    break;
-                case 'T':
-                    printf(" \033[1;37m%c\033[0m", echiquier[i][j]);
-                    break;
-                case 'c':
-                    printf(" \033[1;30m%c\033[0m", echiquier[i][j]);
-                    break;
-                case 'C':
-                    printf(" \033[1;37m%c\033[0m", echiquier[i][j]);
-                    break;
-                case 'f':
-                    printf(" \033[1;30m%c\033[0m", echiquier[i][j]);
-                    break;
-                case 'F':
-                    printf(" \033[1;37m%c\033[0m", echiquier[i][j]);
-                    break;
-                case 'd':
-                    printf(" \033[1;30m%c\033[0m", echiquier[i][j]);
-                    break;
-                case 'D':
-                    printf(" \033[1;37m%c\033[0m", echiquier[i][j]);
-                    break;
-                case 'r':
-                    printf(" \033[1;30m%c\033[0m", echiquier[i][j]);
-                    break;
-                case 'R':
-                    printf(" \033[1;37m%c\033[0m", echiquier[i][j]);
-                    break;
-                default:
-                    printf(" %c", echiquier[i][j]);
-                    break;
+static void print_board(const char *board) {
+    if (strlen(board) != 64) { puts("Invalid board message"); return; }
+    puts("\n     a b c d e f g h");
+    puts("   +-----------------+");
+    for (int r = 0; r < 8; ++r) {
+        printf(" %d |", 8-r);
+        for (int c = 0; c < 8; ++c) printf(" %c", board[r*8+c]);
+        printf(" | %d\n", 8-r);
+    }
+    puts("   +-----------------+");
+    puts("     a b c d e f g h\n");
+}
+static int valid_port(const char *s) {
+    char *end = NULL;
+    long n = strtol(s, &end, 10);
+    return s[0] && end && !*end && n >= 1 && n <= 65535 ? (int)n : 0;
+}
+int main(int argc, char **argv) {
+    const char *host = argc > 1 ? argv[1] : "127.0.0.1";
+    int port = argc > 2 ? valid_port(argv[2]) : 9999;
+    if (argc > 3 || !port) { fprintf(stderr, "Usage: %s [server_ipv4] [port]\n", argv[0]); return 1; }
+    signal(SIGPIPE, SIG_IGN);
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) { perror("socket"); return 1; }
+    struct sockaddr_in address = {0};
+    address.sin_family = AF_INET;
+    address.sin_port = htons((unsigned short)port);
+    if (inet_pton(AF_INET, host, &address.sin_addr) != 1) {
+        fprintf(stderr, "Invalid IPv4 address: %s\n", host); close(fd); return 1;
+    }
+    if (connect(fd, (struct sockaddr *)&address, sizeof address) < 0) { perror("connect"); close(fd); return 1; }
+    char line[256];
+    while (read_line(fd, line, sizeof line)) {
+        if (strncmp(line, "BOARD ", 6) == 0 && strlen(line) == 72) {
+            char board[65]; memcpy(board, line + 6, 64); board[64] = '\0';
+            print_board(board);
+            printf("To play: %s\n", line[71] == 'W' ? "White" : "Black");
+        } else if (strcmp(line, "YOUR_TURN") == 0) {
+            char input[64];
+            printf("Your move (e2e4, e7e8q, or quit): "); fflush(stdout);
+            if (!fgets(input, sizeof input, stdin)) { send_all(fd, "QUIT\n"); break; }
+            input[strcspn(input, "\r\n")] = '\0';
+            if (strcmp(input, "quit") == 0) {
+                send_all(fd, "QUIT\n"); break;
             }
+            if (strlen(input) < 4 || strlen(input) > 5) {
+                puts("Enter 4 coordinates and optionally a promotion piece (q/r/b/n).");
+                send_all(fd, "MOVE ?\n"); /* server will request retry */
+            } else {
+                char command[80];
+                snprintf(command, sizeof command, "MOVE %s\n", input);
+                if (!send_all(fd, command)) break;
+            }
+        } else if (strncmp(line, "GAMEOVER ", 9) == 0) {
+            printf("Game over: %s\n", line+9); break;
+        } else if (strncmp(line, "HELLO ", 6) == 0 || strncmp(line, "INFO ", 5) == 0 || strncmp(line, "ERROR ", 6) == 0) {
+            puts(line);
+        } else {
+            puts("Unexpected server response"); break;
         }
-        printf(" |\n");
     }
-    printf(" +-----------------+\n");
-    printf("\033[0m");  // Réinitialiser la couleur
-
-    // Indiquer à qui est le tour de jouer
-    if (tour == 0) {
-        printf("C'est le tour des \033[1;37mBlancs\033[0m.\n");  // Blanc
-    } else {
-        printf("C'est le tour des \033[1;30mNoirs\033[0m.\n");  // Noir
-    }
-}
-
-int main() {
-    int sockfd, n;
-    struct sockaddr_in serv_addr;
-    char buffer[BUFFER_SIZE];
-    char echiquier[8][8];
-    int tour = 0;
-
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        perror("ERROR opening socket");
-        exit(EXIT_FAILURE);
-    }
-
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(PORT);
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-
-    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        perror("ERROR connecting");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Connected to the server\n");
-
-    // Initialiser l'échiquier
-    initialiser_echiquier(echiquier);
-
-    // Afficher l'échiquier
-    afficher_echiquier(echiquier, tour);
-
-    while (1) {
-        memset(buffer, 0, BUFFER_SIZE);
-
-        // Attendre la réception de l'échiquier mis à jour
-        n = recv(sockfd, buffer, BUFFER_SIZE, 0);
-        if (n <= 0) {
-            printf("Disconnected from the server\n");
-            break;
-        }
-
-        // Copier le nouvel échiquier reçu
-        memcpy(echiquier, buffer, sizeof(echiquier));
-
-        // Afficher l'échiquier
-        afficher_echiquier(echiquier, tour);
-
-        if (tour == 0) {
-            // Demander à l'utilisateur d'entrer un mouvement
-            printf("Entrez votre mouvement (ex. : a2a4) : ");
-            scanf("%s", buffer);
-
-            // Envoyer le mouvement au serveur
-            send(sockfd, buffer, strlen(buffer), 0);
-        }
-
-        // Mettre à jour le tour
-        tour = (tour + 1) % 2;
-    }
-
-    close(sockfd);
+    close(fd);
     return 0;
 }
-
